@@ -29,6 +29,7 @@ const channelsNotReadyMsg = "channels cache is not ready yet, sync process is st
 const defaultUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 const defaultCacheTTL = 1 * time.Hour
 const defaultMinRefreshInterval = 30 * time.Second
+const defaultChannelsRateLimitRetryDelay = time.Minute
 
 var AllChanTypes = []string{"mpim", "im", "public_channel", "private_channel"}
 var PrivateChanType = "private_channel"
@@ -1126,6 +1127,22 @@ func (ap *ApiProvider) getChannelsMultiType(ctx context.Context, channelTypes []
 			zap.Int("count", len(channels)),
 		)
 		if err != nil {
+			if retryAfter, ok := channelsRateLimitRetryDelay(err); ok {
+				ap.logger.Warn("Rate limited while fetching channels, retrying from current cursor",
+					zap.Strings("channelTypes", channelTypes),
+					zap.String("cursor", params.Cursor),
+					zap.Duration("retry_after", retryAfter),
+				)
+				timer := time.NewTimer(retryAfter)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return nil, ctx.Err()
+				case <-timer.C:
+				}
+				continue
+			}
+
 			ap.logger.Error("Failed to fetch channels", zap.Error(err))
 			return nil, err
 		}
@@ -1157,6 +1174,18 @@ func (ap *ApiProvider) getChannelsMultiType(ctx context.Context, channelTypes []
 		params.Cursor = nextcur
 	}
 	return chans, nil
+}
+
+func channelsRateLimitRetryDelay(err error) (time.Duration, bool) {
+	var rateLimitedErr *slack.RateLimitedError
+	if errors.As(err, &rateLimitedErr) {
+		if rateLimitedErr.RetryAfter > 0 {
+			return rateLimitedErr.RetryAfter, true
+		}
+		return defaultChannelsRateLimitRetryDelay, true
+	}
+
+	return 0, false
 }
 
 func (ap *ApiProvider) GetChannels(ctx context.Context, channelTypes []string) ([]Channel, error) {

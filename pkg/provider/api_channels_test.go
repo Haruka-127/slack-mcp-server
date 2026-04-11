@@ -1,8 +1,11 @@
 package provider
 
 import (
+	"errors"
 	"testing"
+	"time"
 
+	"github.com/slack-go/slack"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -166,4 +169,24 @@ func TestAllChanTypesConstant(t *testing.T) {
 	assert.Contains(t, AllChanTypes, "private_channel")
 	assert.Contains(t, AllChanTypes, "im")
 	assert.Contains(t, AllChanTypes, "mpim")
+}
+
+func TestChannelsRateLimitRetryDelay(t *testing.T) {
+	t.Run("uses RetryAfter when present", func(t *testing.T) {
+		retryAfter, ok := channelsRateLimitRetryDelay(&slack.RateLimitedError{RetryAfter: 45 * time.Second})
+		assert.True(t, ok)
+		assert.Equal(t, 45*time.Second, retryAfter)
+	})
+
+	t.Run("uses default when RetryAfter is missing", func(t *testing.T) {
+		retryAfter, ok := channelsRateLimitRetryDelay(&slack.RateLimitedError{})
+		assert.True(t, ok)
+		assert.Equal(t, defaultChannelsRateLimitRetryDelay, retryAfter)
+	})
+
+	t.Run("non rate limit error", func(t *testing.T) {
+		retryAfter, ok := channelsRateLimitRetryDelay(errors.New("boom"))
+		assert.False(t, ok)
+		assert.Zero(t, retryAfter)
+	})
 }
