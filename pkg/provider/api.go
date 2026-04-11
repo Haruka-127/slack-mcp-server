@@ -17,6 +17,7 @@ import (
 	"github.com/korotovsky/slack-mcp-server/pkg/limiter"
 	"github.com/korotovsky/slack-mcp-server/pkg/provider/edge"
 	"github.com/korotovsky/slack-mcp-server/pkg/transport"
+	rslack "github.com/rusq/slack"
 	"github.com/rusq/slackdump/v3/auth"
 	"github.com/slack-go/slack"
 	"go.uber.org/zap"
@@ -387,34 +388,7 @@ func (c *MCPSlackClient) GetConversationsContext(ctx context.Context, params *sl
 					continue
 				}
 				seen[ec.ID] = struct{}{}
-				channels = append(channels, slack.Channel{
-					IsGeneral: ec.IsGeneral,
-					GroupConversation: slack.GroupConversation{
-						Conversation: slack.Conversation{
-							ID:                 ec.ID,
-							IsIM:               ec.IsIM,
-							IsMpIM:             ec.IsMpIM,
-							IsPrivate:          ec.IsPrivate,
-							Created:            slack.JSONTime(ec.Created.Time().UnixMilli()),
-							Unlinked:           ec.Unlinked,
-							NameNormalized:     ec.NameNormalized,
-							IsShared:           ec.IsShared,
-							IsExtShared:        ec.IsExtShared,
-							IsOrgShared:        ec.IsOrgShared,
-							IsPendingExtShared: ec.IsPendingExtShared,
-							NumMembers:         ec.NumMembers,
-						},
-						Name:       ec.Name,
-						IsArchived: ec.IsArchived,
-						Members:    ec.Members,
-						Topic: slack.Topic{
-							Value: ec.Topic.Value,
-						},
-						Purpose: slack.Purpose{
-							Value: ec.Purpose.Value,
-						},
-					},
-				})
+				channels = append(channels, edgeChannelToSlackChannel(ec))
 			}
 
 			// Supplement with ALL pages from the standard API to fill gaps
@@ -452,6 +426,38 @@ func (c *MCPSlackClient) GetConversationsContext(ctx context.Context, params *sl
 	}
 
 	return c.slackClient.GetConversationsContext(ctx, params)
+}
+
+func edgeChannelToSlackChannel(ec rslack.Channel) slack.Channel {
+	return slack.Channel{
+		IsGeneral: ec.IsGeneral,
+		IsMember:  ec.IsMember,
+		GroupConversation: slack.GroupConversation{
+			Conversation: slack.Conversation{
+				ID:                 ec.ID,
+				IsIM:               ec.IsIM,
+				IsMpIM:             ec.IsMpIM,
+				IsPrivate:          ec.IsPrivate,
+				Created:            slack.JSONTime(ec.Created.Time().UnixMilli()),
+				Unlinked:           ec.Unlinked,
+				NameNormalized:     ec.NameNormalized,
+				IsShared:           ec.IsShared,
+				IsExtShared:        ec.IsExtShared,
+				IsOrgShared:        ec.IsOrgShared,
+				IsPendingExtShared: ec.IsPendingExtShared,
+				NumMembers:         ec.NumMembers,
+			},
+			Name:       ec.Name,
+			IsArchived: ec.IsArchived,
+			Members:    ec.Members,
+			Topic: slack.Topic{
+				Value: ec.Topic.Value,
+			},
+			Purpose: slack.Purpose{
+				Value: ec.Purpose.Value,
+			},
+		},
+	}
 }
 
 func (c *MCPSlackClient) GetConversationsForUserContext(ctx context.Context, params *slack.GetConversationsForUserParameters) ([]slack.Channel, string, error) {

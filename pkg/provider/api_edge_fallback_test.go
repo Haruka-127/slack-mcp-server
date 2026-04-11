@@ -3,6 +3,7 @@ package provider
 import (
 	"testing"
 
+	rslack "github.com/rusq/slack"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -85,4 +86,23 @@ func TestEdgeFailedPreventsRetry(t *testing.T) {
 		assert.False(t, wouldTryEdge,
 			"call %d: should not try edge after it failed", i+1)
 	}
+}
+
+func TestEdgeChannelToSlackChannelPreservesMembership(t *testing.T) {
+	ec := rslack.Channel{
+		IsMember: true,
+		GroupConversation: rslack.GroupConversation{
+			Conversation: rslack.Conversation{
+				ID:             "C123",
+				NameNormalized: "general",
+			},
+			Name: "general",
+		},
+	}
+
+	converted := edgeChannelToSlackChannel(ec)
+
+	assert.True(t, converted.IsMember)
+	assert.Equal(t, ec.ID, converted.ID)
+	assert.Equal(t, ec.Name, converted.Name)
 }
