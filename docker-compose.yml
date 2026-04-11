@@ -1,5 +1,9 @@
 services:
   mcp-server:
+    build:
+      context: .
+      target: production
+      dockerfile: Dockerfile
     image: ghcr.io/korotovsky/slack-mcp-server:latest
     restart: unless-stopped
     networks:
@@ -7,8 +11,7 @@ services:
     ports:
       - "3001:3001"
     volumes:
-      - users_cache:/app/mcp-server/.users_cache.json
-      - channels_cache:/app/mcp-server/.channels_cache.json
+      - mcp_cache:/root/.cache/slack-mcp-server
     env_file:
       - .env
     environment:
@@ -16,8 +19,7 @@ services:
       SLACK_MCP_PORT: "3001"
 
 volumes:
-  users_cache:
-  channels_cache:
+  mcp_cache:
 
 networks:
   app-tier:
