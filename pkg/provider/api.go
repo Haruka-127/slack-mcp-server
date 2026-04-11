@@ -1091,7 +1091,12 @@ func (ap *ApiProvider) GetSlackConnect(ctx context.Context) ([]slack.User, error
 }
 
 func (ap *ApiProvider) GetChannelsType(ctx context.Context, channelType string) []Channel {
-	return ap.getChannelsMultiType(ctx, []string{channelType})
+	channels, err := ap.getChannelsMultiType(ctx, []string{channelType})
+	if err != nil {
+		ap.logger.Error("Failed to fetch channels by type", zap.String("channel_type", channelType), zap.Error(err))
+		return nil
+	}
+	return channels
 }
 
 func (ap *ApiProvider) getChannelsMultiType(ctx context.Context, channelTypes []string) ([]Channel, error) {
