@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -188,5 +189,20 @@ func TestChannelsRateLimitRetryDelay(t *testing.T) {
 		retryAfter, ok := channelsRateLimitRetryDelay(errors.New("boom"))
 		assert.False(t, ok)
 		assert.Zero(t, retryAfter)
+	})
+}
+
+func TestWaitWithContext(t *testing.T) {
+	t.Run("returns context error when canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := waitWithContext(ctx, time.Second)
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run("returns nil after delay", func(t *testing.T) {
+		err := waitWithContext(context.Background(), 5*time.Millisecond)
+		assert.NoError(t, err)
 	})
 }

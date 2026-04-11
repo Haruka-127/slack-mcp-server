@@ -1133,12 +1133,8 @@ func (ap *ApiProvider) getChannelsMultiType(ctx context.Context, channelTypes []
 					zap.String("cursor", params.Cursor),
 					zap.Duration("retry_after", retryAfter),
 				)
-				timer := time.NewTimer(retryAfter)
-				select {
-				case <-ctx.Done():
-					timer.Stop()
-					return nil, ctx.Err()
-				case <-timer.C:
+				if err := waitWithContext(ctx, retryAfter); err != nil {
+					return nil, err
 				}
 				continue
 			}
@@ -1186,6 +1182,25 @@ func channelsRateLimitRetryDelay(err error) (time.Duration, bool) {
 	}
 
 	return 0, false
+}
+
+func waitWithContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (ap *ApiProvider) GetChannels(ctx context.Context, channelTypes []string) ([]Channel, error) {
