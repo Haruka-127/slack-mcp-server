@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -13,12 +14,14 @@ import (
 	"github.com/korotovsky/slack-mcp-server/pkg/provider"
 	"github.com/korotovsky/slack-mcp-server/pkg/server"
 	"github.com/mattn/go-isatty"
+	"github.com/slack-go/slack"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
 var defaultSseHost = "127.0.0.1"
 var defaultSsePort = 13080
+var defaultCacheSyncRetryDelay = time.Minute
 
 func main() {
 	var transport string
@@ -172,12 +175,19 @@ func newUsersWatcher(p *provider.ApiProvider, once *sync.Once, logger *zap.Logge
 			return
 		}
 
-		err := p.RefreshUsers(context.Background())
-		if err != nil {
-			logger.Fatal("Error booting provider",
+		for {
+			err := p.RefreshUsers(context.Background())
+			if err == nil {
+				break
+			}
+
+			retryAfter := cacheSyncRetryDelay(err)
+			logger.Warn("Failed to cache users, retrying",
 				zap.String("context", "console"),
 				zap.Error(err),
+				zap.Duration("retry_after", retryAfter),
 			)
+			time.Sleep(retryAfter)
 		}
 
 		ready, _ := p.IsReady()
@@ -204,12 +214,19 @@ func newChannelsWatcher(p *provider.ApiProvider, once *sync.Once, logger *zap.Lo
 			return
 		}
 
-		err := p.RefreshChannels(context.Background())
-		if err != nil {
-			logger.Fatal("Error booting provider",
+		for {
+			err := p.RefreshChannels(context.Background())
+			if err == nil {
+				break
+			}
+
+			retryAfter := cacheSyncRetryDelay(err)
+			logger.Warn("Failed to cache channels, retrying",
 				zap.String("context", "console"),
 				zap.Error(err),
+				zap.Duration("retry_after", retryAfter),
 			)
+			time.Sleep(retryAfter)
 		}
 
 		ready, _ := p.IsReady()
@@ -221,6 +238,15 @@ func newChannelsWatcher(p *provider.ApiProvider, once *sync.Once, logger *zap.Lo
 			})
 		}
 	}
+}
+
+func cacheSyncRetryDelay(err error) time.Duration {
+	var rateLimitedErr *slack.RateLimitedError
+	if errors.As(err, &rateLimitedErr) && rateLimitedErr.RetryAfter > 0 {
+		return rateLimitedErr.RetryAfter
+	}
+
+	return defaultCacheSyncRetryDelay
 }
 
 func validateToolConfig(config string) error {
