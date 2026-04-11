@@ -10,10 +10,11 @@ import (
 // in GetChannels to filter the snapshot by requested types.
 func TestChannelTypeFiltering(t *testing.T) {
 	channels := map[string]Channel{
-		"C1": {ID: "C1", Name: "#general", IsPrivate: false, IsIM: false, IsMpIM: false},
-		"C2": {ID: "C2", Name: "#secret", IsPrivate: true, IsIM: false, IsMpIM: false},
-		"D1": {ID: "D1", Name: "@alice", IsPrivate: true, IsIM: true, IsMpIM: false},
-		"G1": {ID: "G1", Name: "mpdm-a-b-c", IsPrivate: true, IsIM: false, IsMpIM: true},
+		"C1": {ID: "C1", Name: "#general", IsPrivate: false, IsIM: false, IsMpIM: false, IsMember: true},
+		"C2": {ID: "C2", Name: "#secret", IsPrivate: true, IsIM: false, IsMpIM: false, IsMember: true},
+		"D1": {ID: "D1", Name: "@alice", IsPrivate: true, IsIM: true, IsMpIM: false, IsMember: true},
+		"G1": {ID: "G1", Name: "mpdm-a-b-c", IsPrivate: true, IsIM: false, IsMpIM: true, IsMember: true},
+		"C3": {ID: "C3", Name: "#browse-only", IsPrivate: false, IsIM: false, IsMpIM: false, IsMember: false},
 	}
 
 	// This mirrors the filtering logic in GetChannels
@@ -38,8 +39,13 @@ func TestChannelTypeFiltering(t *testing.T) {
 
 	t.Run("public_channel only", func(t *testing.T) {
 		res := filterByTypes(channels, []string{"public_channel"})
-		assert.Len(t, res, 1)
-		assert.Equal(t, "C1", res[0].ID)
+		assert.Len(t, res, 2)
+		ids := map[string]bool{}
+		for _, ch := range res {
+			ids[ch.ID] = true
+		}
+		assert.True(t, ids["C1"])
+		assert.True(t, ids["C3"])
 	})
 
 	t.Run("private_channel only", func(t *testing.T) {
@@ -62,17 +68,18 @@ func TestChannelTypeFiltering(t *testing.T) {
 
 	t.Run("all types returns all channels", func(t *testing.T) {
 		res := filterByTypes(channels, AllChanTypes)
-		assert.Len(t, res, 4)
+		assert.Len(t, res, 5)
 	})
 
 	t.Run("multiple types", func(t *testing.T) {
 		res := filterByTypes(channels, []string{"public_channel", "im"})
-		assert.Len(t, res, 2)
+		assert.Len(t, res, 3)
 		ids := map[string]bool{}
 		for _, ch := range res {
 			ids[ch.ID] = true
 		}
 		assert.True(t, ids["C1"], "should include public channel")
+		assert.True(t, ids["C3"], "should include public channel not joined")
 		assert.True(t, ids["D1"], "should include IM")
 	})
 
@@ -91,6 +98,65 @@ func TestChannelTypeFiltering(t *testing.T) {
 			assert.False(t, ch.IsMpIM, "MPIMs should not appear in private_channel results")
 		}
 	})
+}
+
+func TestMapChannelPreservesMembership(t *testing.T) {
+	ch := mapChannel(
+		"C1",
+		"general",
+		"general",
+		"topic",
+		"purpose",
+		"",
+		nil,
+		42,
+		true,
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+
+	assert.True(t, ch.IsMember)
+	assert.Equal(t, "#general", ch.Name)
+}
+
+func TestMapChannelNormalizesJoinedOnlyMembership(t *testing.T) {
+	cases := []struct {
+		name      string
+		isIM      bool
+		isMpIM    bool
+		isPrivate bool
+		nameNorm  string
+	}{
+		{name: "private channel", isPrivate: true, nameNorm: "secret"},
+		{name: "im", isIM: true, isPrivate: true},
+		{name: "mpim", isMpIM: true, isPrivate: true, nameNorm: "group-dm"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ch := mapChannel(
+				"C1",
+				tc.nameNorm,
+				tc.nameNorm,
+				"topic",
+				"purpose",
+				"U1",
+				[]string{"U1", "U2"},
+				2,
+				false,
+				tc.isIM,
+				tc.isMpIM,
+				tc.isPrivate,
+				false,
+				nil,
+			)
+
+			assert.True(t, ch.IsMember)
+		})
+	}
 }
 
 // TestAllChanTypesConstant verifies the expected channel types are defined.

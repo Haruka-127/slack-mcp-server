@@ -364,6 +364,10 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 			mcp.WithString("sort",
 				mcp.Description("Type of sorting. Allowed values: 'popularity' - sort by number of members/participants in each channel."),
 			),
+			mcp.WithString("membership",
+				mcp.DefaultString("all"),
+				mcp.Description("Membership filter. Allowed values: 'all', 'joined', 'not_joined_public'. Use 'joined' to return channels you belong to, or 'not_joined_public' to return public channels you can see but have not joined."),
+			),
 			mcp.WithNumber("limit",
 				mcp.DefaultNumber(100),
 				mcp.Description("The maximum number of items to return. Must be an integer between 1 and 1000 (maximum 999)."), // context fix for cursor: https://github.com/korotovsky/slack-mcp-server/issues/7

@@ -21,6 +21,7 @@ type Channel struct {
 	Topic       string `json:"topic"`
 	Purpose     string `json:"purpose"`
 	MemberCount int    `json:"memberCount"`
+	IsMember    bool   `json:"isMember"`
 	Cursor      string `json:"cursor"`
 }
 
@@ -84,6 +85,7 @@ func (ch *ChannelsHandler) ChannelsResource(ctx context.Context, request mcp.Rea
 			Topic:       channel.Topic,
 			Purpose:     channel.Purpose,
 			MemberCount: channel.MemberCount,
+			IsMember:    channel.IsMember,
 		})
 	}
 
@@ -112,12 +114,14 @@ func (ch *ChannelsHandler) ChannelsHandler(ctx context.Context, request mcp.Call
 
 	sortType := request.GetString("sort", "popularity")
 	types := request.GetString("channel_types", provider.PubChanType)
+	membership := request.GetString("membership", "all")
 	cursor := request.GetString("cursor", "")
 	limit := request.GetInt("limit", 0)
 
 	ch.logger.Debug("Request parameters",
 		zap.String("sort", sortType),
 		zap.String("channel_types", types),
+		zap.String("membership", membership),
 		zap.String("cursor", cursor),
 		zap.Int("limit", limit),
 	)
@@ -162,6 +166,12 @@ func (ch *ChannelsHandler) ChannelsHandler(ctx context.Context, request mcp.Call
 	channels := filterChannelsByTypes(allChannels, channelTypes)
 	ch.logger.Debug("Channels after filtering by type", zap.Int("count", len(channels)))
 
+	channels = filterChannelsByMembership(channels, membership)
+	ch.logger.Debug("Channels after filtering by membership",
+		zap.String("membership", membership),
+		zap.Int("count", len(channels)),
+	)
+
 	var chans []provider.Channel
 
 	chans, nextcur = paginateChannels(
@@ -182,6 +192,7 @@ func (ch *ChannelsHandler) ChannelsHandler(ctx context.Context, request mcp.Call
 			Topic:       channel.Topic,
 			Purpose:     channel.Purpose,
 			MemberCount: channel.MemberCount,
+			IsMember:    channel.IsMember,
 		})
 	}
 
@@ -251,6 +262,36 @@ func filterChannelsByTypes(channels map[string]provider.Channel, types []string)
 		zap.Int("ims", imCount),
 		zap.Int("mpims", mpimCount),
 	)
+
+	return result
+}
+
+func filterChannelsByMembership(channels []provider.Channel, membership string) []provider.Channel {
+	logger := zap.L()
+
+	if membership == "" || membership == "all" {
+		return channels
+	}
+
+	if membership != "joined" && membership != "not_joined_public" {
+		logger.Warn("Invalid membership filter ignored", zap.String("membership", membership))
+		return channels
+	}
+
+	result := make([]provider.Channel, 0, len(channels))
+
+	for _, ch := range channels {
+		switch membership {
+		case "joined":
+			if ch.IsMember {
+				result = append(result, ch)
+			}
+		case "not_joined_public":
+			if !ch.IsPrivate && !ch.IsIM && !ch.IsMpIM && !ch.IsMember {
+				result = append(result, ch)
+			}
+		}
+	}
 
 	return result
 }

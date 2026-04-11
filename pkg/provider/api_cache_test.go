@@ -82,3 +82,43 @@ func TestEmptyCacheWriteGuard(t *testing.T) {
 		assert.True(t, shouldWriteCache(channels))
 	})
 }
+
+func TestChannelsCacheHasMembershipField(t *testing.T) {
+	t.Run("legacy cache without is_member is incompatible", func(t *testing.T) {
+		ok, err := channelsCacheHasMembershipField([]byte(`[{"id":"C1","name":"#general"}]`))
+		require.NoError(t, err)
+		assert.False(t, ok)
+	})
+
+	t.Run("cache with explicit false is compatible", func(t *testing.T) {
+		ok, err := channelsCacheHasMembershipField([]byte(`[{"id":"C1","name":"#general","is_member":false}]`))
+		require.NoError(t, err)
+		assert.True(t, ok)
+	})
+
+	t.Run("null cache is handled by empty-slice guard", func(t *testing.T) {
+		ok, err := channelsCacheHasMembershipField([]byte("null"))
+		require.NoError(t, err)
+		assert.True(t, ok)
+	})
+}
+
+func TestNormalizeChannelMembership(t *testing.T) {
+	t.Run("private-like conversations are always members", func(t *testing.T) {
+		cases := []Channel{
+			{ID: "C1", IsPrivate: true, IsMember: false},
+			{ID: "D1", IsIM: true, IsPrivate: true, IsMember: false},
+			{ID: "G1", IsMpIM: true, IsPrivate: true, IsMember: false},
+		}
+
+		for _, tc := range cases {
+			normalized := normalizeChannelMembership(tc)
+			assert.True(t, normalized.IsMember, tc.ID)
+		}
+	})
+
+	t.Run("public non-member stays false", func(t *testing.T) {
+		normalized := normalizeChannelMembership(Channel{ID: "C2", IsMember: false})
+		assert.False(t, normalized.IsMember)
+	})
+}

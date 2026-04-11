@@ -168,6 +168,7 @@ type Channel struct {
 	Topic       string   `json:"topic"`
 	Purpose     string   `json:"purpose"`
 	MemberCount int      `json:"memberCount"`
+	IsMember    bool     `json:"is_member"`
 	IsMpIM      bool     `json:"mpim"`
 	IsIM        bool     `json:"im"`
 	IsPrivate   bool     `json:"private"`
@@ -228,11 +229,11 @@ type MCPSlackClient struct {
 	authResponse *slack.AuthTestResponse
 	authProvider auth.Provider
 
-	isEnterprise  bool
-	isOAuth       bool
-	isBotToken    bool
-	edgeFailed    bool // set when edge API fails; subsequent calls skip straight to standard API
-	teamEndpoint  string
+	isEnterprise bool
+	isOAuth      bool
+	isBotToken   bool
+	edgeFailed   bool // set when edge API fails; subsequent calls skip straight to standard API
+	teamEndpoint string
 }
 
 type ApiProvider struct {
@@ -636,7 +637,7 @@ func newWithXOXP(transport string, authProvider auth.ValueAuth, logger *zap.Logg
 
 	channelsCache := os.Getenv("SLACK_MCP_CHANNELS_CACHE")
 	if channelsCache == "" {
-		channelsCache = getCachePathWithTeamID(teamID, "channels_cache_v2.json")
+		channelsCache = getCachePathWithTeamID(teamID, "channels_cache_v3.json")
 	}
 
 	if os.Getenv("SLACK_MCP_XOXP_TOKEN") == "demo" || (os.Getenv("SLACK_MCP_XOXC_TOKEN") == "demo" && os.Getenv("SLACK_MCP_XOXD_TOKEN") == "demo") {
@@ -696,7 +697,7 @@ func newWithXOXC(transport string, authProvider auth.ValueAuth, logger *zap.Logg
 
 	channelsCache := os.Getenv("SLACK_MCP_CHANNELS_CACHE")
 	if channelsCache == "" {
-		channelsCache = getCachePathWithTeamID(teamID, "channels_cache_v2.json")
+		channelsCache = getCachePathWithTeamID(teamID, "channels_cache_v3.json")
 	}
 
 	if os.Getenv("SLACK_MCP_XOXP_TOKEN") == "demo" || (os.Getenv("SLACK_MCP_XOXC_TOKEN") == "demo" && os.Getenv("SLACK_MCP_XOXD_TOKEN") == "demo") {
@@ -920,60 +921,72 @@ func (ap *ApiProvider) refreshChannelsInternal(ctx context.Context, force bool) 
 	// Check if we should use cache (not forced, cache exists, and within TTL)
 	if !force {
 		if data, err := os.ReadFile(ap.channelsCachePath); err == nil {
-			var cachedChannels []Channel
-			if err := json.Unmarshal(data, &cachedChannels); err != nil {
+			hasMembershipField, err := channelsCacheHasMembershipField(data)
+			if err != nil {
 				ap.logger.Warn("Failed to unmarshal channels cache, will refetch",
 					zap.String("cache_file", ap.channelsCachePath),
 					zap.Error(err))
-			} else if len(cachedChannels) == 0 {
-				ap.logger.Warn("Channels cache is empty or null, will refetch",
+			} else if !hasMembershipField {
+				ap.logger.Warn("Channels cache is missing membership metadata, will refetch",
 					zap.String("cache_file", ap.channelsCachePath))
 			} else {
-				// Check cache TTL using file modification time
-				cacheValid := true
-				if ap.cacheTTL > 0 {
-					if fileInfo, err := os.Stat(ap.channelsCachePath); err == nil {
-						cacheAge := time.Since(fileInfo.ModTime())
-						if cacheAge > ap.cacheTTL {
-							ap.logger.Info("Channels cache expired, will refetch",
-								zap.Duration("cache_age", cacheAge),
-								zap.Duration("ttl", ap.cacheTTL),
-								zap.String("cache_file", ap.channelsCachePath))
-							cacheValid = false
-						}
-					}
-				}
-
-				if cacheValid {
-					// Re-map channels with current users cache to ensure DM names are populated
-					usersMap := ap.ProvideUsersMap().Users
-					newSnapshot := &ChannelsCache{
-						Channels:    make(map[string]Channel, len(cachedChannels)),
-						ChannelsInv: make(map[string]string, len(cachedChannels)),
-					}
-					for _, c := range cachedChannels {
-						// For IM channels, re-generate the name and purpose using current users cache
-						if c.IsIM {
-							// Re-map the channel to get updated user name if available
-							remappedChannel := mapChannel(
-								c.ID, "", "", c.Topic, c.Purpose,
-								c.User, c.Members, c.MemberCount,
-								c.IsIM, c.IsMpIM, c.IsPrivate, c.IsExtShared,
-								usersMap,
-							)
-							newSnapshot.Channels[c.ID] = remappedChannel
-							newSnapshot.ChannelsInv[remappedChannel.Name] = c.ID
-						} else {
-							newSnapshot.Channels[c.ID] = c
-							newSnapshot.ChannelsInv[c.Name] = c.ID
-						}
-					}
-					ap.channelsSnapshot.Store(newSnapshot)
-					ap.logger.Info("Loaded channels from cache and re-mapped DM names",
-						zap.Int("count", len(cachedChannels)),
+				var cachedChannels []Channel
+				if err := json.Unmarshal(data, &cachedChannels); err != nil {
+					ap.logger.Warn("Failed to unmarshal channels cache, will refetch",
+						zap.String("cache_file", ap.channelsCachePath),
+						zap.Error(err))
+				} else if len(cachedChannels) == 0 {
+					ap.logger.Warn("Channels cache is empty or null, will refetch",
 						zap.String("cache_file", ap.channelsCachePath))
-					ap.channelsReady = true
-					return nil
+				} else {
+					// Check cache TTL using file modification time
+					cacheValid := true
+					if ap.cacheTTL > 0 {
+						if fileInfo, err := os.Stat(ap.channelsCachePath); err == nil {
+							cacheAge := time.Since(fileInfo.ModTime())
+							if cacheAge > ap.cacheTTL {
+								ap.logger.Info("Channels cache expired, will refetch",
+									zap.Duration("cache_age", cacheAge),
+									zap.Duration("ttl", ap.cacheTTL),
+									zap.String("cache_file", ap.channelsCachePath))
+								cacheValid = false
+							}
+						}
+					}
+
+					if cacheValid {
+						// Re-map channels with current users cache to ensure DM names are populated
+						usersMap := ap.ProvideUsersMap().Users
+						newSnapshot := &ChannelsCache{
+							Channels:    make(map[string]Channel, len(cachedChannels)),
+							ChannelsInv: make(map[string]string, len(cachedChannels)),
+						}
+						for _, cachedChannel := range cachedChannels {
+							cachedChannel = normalizeChannelMembership(cachedChannel)
+
+							// For IM channels, re-generate the name and purpose using current users cache
+							if cachedChannel.IsIM {
+								// Re-map the channel to get updated user name if available
+								remappedChannel := mapChannel(
+									cachedChannel.ID, "", "", cachedChannel.Topic, cachedChannel.Purpose,
+									cachedChannel.User, cachedChannel.Members, cachedChannel.MemberCount, cachedChannel.IsMember,
+									cachedChannel.IsIM, cachedChannel.IsMpIM, cachedChannel.IsPrivate, cachedChannel.IsExtShared,
+									usersMap,
+								)
+								newSnapshot.Channels[cachedChannel.ID] = remappedChannel
+								newSnapshot.ChannelsInv[remappedChannel.Name] = cachedChannel.ID
+							} else {
+								newSnapshot.Channels[cachedChannel.ID] = cachedChannel
+								newSnapshot.ChannelsInv[cachedChannel.Name] = cachedChannel.ID
+							}
+						}
+						ap.channelsSnapshot.Store(newSnapshot)
+						ap.logger.Info("Loaded channels from cache and re-mapped DM names",
+							zap.Int("count", len(cachedChannels)),
+							zap.String("cache_file", ap.channelsCachePath))
+						ap.channelsReady = true
+						return nil
+					}
 				}
 			}
 		}
@@ -1002,6 +1015,33 @@ func (ap *ApiProvider) refreshChannelsInternal(ctx context.Context, force bool) 
 	ap.channelsReady = true
 
 	return nil
+}
+
+type channelsCacheSchemaProbe struct {
+	IsMember *bool `json:"is_member"`
+}
+
+func channelsCacheHasMembershipField(data []byte) (bool, error) {
+	var probe []channelsCacheSchemaProbe
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return false, err
+	}
+
+	for _, channel := range probe {
+		if channel.IsMember == nil {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+func normalizeChannelMembership(channel Channel) Channel {
+	if channel.IsPrivate || channel.IsIM || channel.IsMpIM {
+		channel.IsMember = true
+	}
+
+	return channel
 }
 
 func (ap *ApiProvider) GetSlackConnect(ctx context.Context) ([]slack.User, error) {
@@ -1085,6 +1125,7 @@ func (ap *ApiProvider) getChannelsMultiType(ctx context.Context, channelTypes []
 				channel.User,
 				channel.Members,
 				channel.NumMembers,
+				channel.IsMember,
 				channel.IsIM,
 				channel.IsMpIM,
 				channel.IsPrivate,
@@ -1234,6 +1275,7 @@ func mapChannel(
 	id, name, nameNormalized, topic, purpose, user string,
 	members []string,
 	numMembers int,
+	isMember bool,
 	isIM, isMpIM, isPrivate, isExtShared bool,
 	usersMap map[string]slack.User,
 ) Channel {
@@ -1289,17 +1331,18 @@ func mapChannel(
 		channelName = "#" + nameNormalized
 	}
 
-	return Channel{
+	return normalizeChannelMembership(Channel{
 		ID:          id,
 		Name:        channelName,
 		Topic:       finalTopic,
 		Purpose:     finalPurpose,
 		MemberCount: finalMemberCount,
+		IsMember:    isMember,
 		IsIM:        isIM,
 		IsMpIM:      isMpIM,
 		IsPrivate:   isPrivate,
 		IsExtShared: isExtShared,
 		User:        userID,
 		Members:     members,
-	}
+	})
 }
