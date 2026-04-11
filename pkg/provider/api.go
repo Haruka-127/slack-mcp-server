@@ -1139,6 +1139,7 @@ func (ap *ApiProvider) getChannelsMultiType(ctx context.Context, channelTypes []
 					timer.Stop()
 					return nil, ctx.Err()
 				case <-timer.C:
+					timer.Stop()
 				}
 				continue
 			}
